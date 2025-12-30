@@ -1,0 +1,366 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # PostgreSQL Source Database
+  # =============================================================================
+  postgres-source:
+    image: postgres:15-alpine
+    container_name: postgres-source
+    environment:
+      POSTGRES_DB: ecommerce_source
+      POSTGRES_USER: ecommerce_user
+      POSTGRES_PASSWORD: ecommerce_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_source_data:/var/lib/postgresql/data
+      - ./sql/create_source_tables.sql:/docker-entrypoint-initdb.d/01-create_source_tables.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecommerce_user -d ecommerce_source"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # PostgreSQL Data Warehouse
+  # =============================================================================
+  postgres-warehouse:
+    image: postgres:15-alpine
+    container_name: postgres-warehouse
+    environment:
+      POSTGRES_DB: ecommerce_warehouse
+      POSTGRES_USER: warehouse_user
+      POSTGRES_PASSWORD: warehouse_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_warehouse_data:/var/lib/postgresql/data
+      - ./sql/create_warehouse_tables.sql:/docker-entrypoint-initdb.d/01-create_warehouse_tables.sql
+      - ./sql/create_data_marts.sql:/docker-entrypoint-initdb.d/02-create_data_marts.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warehouse_user -d ecommerce_warehouse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Apache Zookeeper
+  # =============================================================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Apache Kafka
+  # =============================================================================
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # MinIO (S3 Compatible Object Storage)
+  # =============================================================================
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Apache Spark Master
+  # =============================================================================
+  spark-master:
+    image: apache/spark:3.5.0
+    container_name: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master"]
+    environment:
+      - SPARK_MASTER_HOST=spark-master
+      - SPARK_MASTER_PORT=7077
+      - SPARK_MASTER_WEBUI_PORT=8080
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark_jobs:/opt/spark-jobs
+      - ./data:/opt/data
+      - spark_data:/opt/spark/work
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Apache Spark Worker
+  # =============================================================================
+  spark-worker:
+    image: apache/spark:3.5.0
+    container_name: spark-worker
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    depends_on:
+      - spark-master
+    volumes:
+      - ./spark_jobs:/opt/spark-jobs
+      - ./data:/opt/data
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Redis (Airflow Backend)
+  # =============================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Apache Airflow Webserver
+  # =============================================================================
+  airflow-webserver:
+    image: apache/airflow:2.8.0-python3.10
+    container_name: airflow-webserver
+    command: webserver
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=your-fernet-key-here
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Apache Airflow Scheduler
+  # =============================================================================
+  airflow-scheduler:
+    image: apache/airflow:2.8.0-python3.10
+    container_name: airflow-scheduler
+    command: scheduler
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=your-fernet-key-here
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./src:/opt/airflow/src
+      - ./data:/opt/airflow/data
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Airflow PostgreSQL Database
+  # =============================================================================
+  postgres-airflow:
+    image: postgres:15-alpine
+    container_name: postgres-airflow
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Airflow Init
+  # =============================================================================
+  airflow-init:
+    image: apache/airflow:2.8.0-python3.10
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db init
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || true
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=your-fernet-key-here
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Grafana
+  # =============================================================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - postgres-warehouse
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Metabase
+  # =============================================================================
+  metabase:
+    image: metabase/metabase:v0.47.0
+    container_name: metabase
+    ports:
+      - "3001:3000"
+    environment:
+      - MB_DB_TYPE=postgres
+      - MB_DB_DBNAME=metabase
+      - MB_DB_PORT=5432
+      - MB_DB_USER=metabase
+      - MB_DB_PASS=metabase
+      - MB_DB_HOST=postgres-metabase
+    depends_on:
+      - postgres-metabase
+    networks:
+      - pipeline-network
+
+  # =============================================================================
+  # Metabase PostgreSQL Database
+  # =============================================================================
+  postgres-metabase:
+    image: postgres:15-alpine
+    container_name: postgres-metabase
+    environment:
+      POSTGRES_DB: metabase
+      POSTGRES_USER: metabase
+      POSTGRES_PASSWORD: metabase
+    volumes:
+      - postgres_metabase_data:/var/lib/postgresql/data
+    networks:
+      - pipeline-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  pipeline-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_source_data:
+  postgres_warehouse_data:
+  postgres_airflow_data:
+  postgres_metabase_data:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_data:
+  minio_data:
+  spark_data:
+  redis_data:
+  grafana_data:
