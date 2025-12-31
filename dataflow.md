@@ -897,7 +897,9 @@ cd ecommerce-data-pipeline
 pip install pandas psycopg2-binary
 
 # Run the ETL
-python run_etl_manual.py
+python run_etl_manual.py (error message)
+
+python run_etl_adaptive.py
 Expected output:
 
 text
@@ -1129,7 +1131,9 @@ pip install kafka-python
 
 # Run the producer
 python kafka_event_producer.py
-6.4 Consume Events (Verify)
+
+python .\kafka_producer.py
+
 In a new terminal:
 
 Bash
@@ -1139,6 +1143,10 @@ docker exec -it kafka kafka-console-consumer \
     --bootstrap-server localhost:9092 \
     --topic events \
     --from-beginning
+
+docker exec -it kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic events --from-beginning
+
+
 Step 7: Configure Airflow DAGs
 7.1 Access Airflow UI
 Go to http://localhost:8081
@@ -1442,3 +1450,35 @@ MinIO	Uploaded data to object storage	Data Lake, S3
 Airflow	Orchestrated pipeline workflows	Workflow Orchestration
 Grafana	Created monitoring dashboards	Observability
 Metabase	Built BI reports	Business Intelligence
+
+# After running run ./scripts/start_pipeline_enhan.sh
+our E-Commerce Data Pipeline Platform is now fully operational! Here's what we accomplished:
+✅ Completed Steps:
+1. Prerequisites Check - Docker verified and running
+2. Environment Setup - Project directories and configuration created
+3. SQL Files Created - Database schemas generated for source and warehouse
+4. Sample Data Files - CSV and JSON sample data prepared
+5. Docker Services Started - All containers pulled and running
+6. Databases Initialized - PostgreSQL databases populated with sample data
+7. Kafka Topics Created - Streaming topics configured
+8. MinIO Buckets Created - Data lake storage buckets ready
+9. Health Check Passed - All services running properly
+10. URLs & Next Steps - Service endpoints configured
+🌐 Service URLs:
+Core Services:
+Airflow UI: http://localhost:8081 (admin/admin)
+Spark Master: http://localhost:8080
+Grafana: http://localhost:3000 (admin/admin)
+Metabase: http://localhost:3001
+MinIO Console: http://localhost:9001 (minioadmin/minioadmin123)
+Database Connections:
+Source DB: localhost:5432 (ecommerce_user/ecommerce_pass)
+Warehouse DB: localhost:5433 (warehouse_user/warehouse_pass)
+Kafka: localhost:9092
+🚀 Next Steps:
+1. Run ETL: Execute data pipelines via Airflow UI
+2. Send Events: Use Kafka producers for real-time data
+3. Configure Monitoring: Set up Grafana dashboards
+4. Explore Data: Query warehouse via Metabase
+5. View Logs: docker-compose logs -f [service-name]
+Your data pipeline platform is ready for data ingestion, processing, and analytics! Would you like me to help you with any of the next steps, such as running the first ETL pipeline or configuring monitoring?
