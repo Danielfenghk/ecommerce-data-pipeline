@@ -1,0 +1,27 @@
+# profiles.yml - Database connection configuration
+# Usually stored in ~/.dbt/profiles.yml, not in project
+
+ecommerce:
+  target: dev
+  outputs:
+    # Development environment
+    dev:
+      type: postgres
+      host: localhost
+      port: 5433
+      user: warehouse_user
+      password: warehouse_pass
+      dbname: ecommerce_warehouse
+      schema: public
+      threads: 4
+    
+    # Production environment
+    prod:
+      type: postgres
+      host: "{{ env_var('WAREHOUSE_DB_HOST') }}"
+      port: "{{ env_var('WAREHOUSE_DB_PORT') | int }}"
+      user: "{{ env_var('WAREHOUSE_DB_USER') }}"
+      password: "{{ env_var('WAREHOUSE_DB_PASSWORD') }}"
+      dbname: ecommerce_warehouse
+      schema: public
+      threads: 8

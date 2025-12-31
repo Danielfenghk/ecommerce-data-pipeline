@@ -1,0 +1,63 @@
+# _marts.yml - Documentation and tests for mart models
+
+version: 2
+
+models:
+  - name: dim_customers
+    description: "Customer dimension table with all attributes and metrics"
+    columns:
+      - name: customer_key
+        description: "Surrogate key for customer"
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "Natural key from source system"
+        tests:
+          - unique
+          - not_null
+      - name: lifetime_revenue
+        description: "Total revenue from this customer"
+        tests:
+          - not_null
+  
+  - name: dim_products
+    description: "Product dimension table"
+    columns:
+      - name: product_key
+        description: "Surrogate key for product"
+        tests:
+          - unique
+          - not_null
+      - name: current_price
+        description: "Current selling price"
+        tests:
+          - not_null
+  
+  - name: fact_orders
+    description: "Order fact table"
+    columns:
+      - name: order_key
+        description: "Surrogate key for order"
+        tests:
+          - unique
+          - not_null
+      - name: customer_key
+        description: "Foreign key to dim_customers"
+        tests:
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_key
+      - name: total_amount
+        description: "Total order amount"
+        tests:
+          - not_null
+  
+  - name: mart_sales_summary
+    description: "Daily sales aggregation"
+    columns:
+      - name: date_key
+        description: "Date key in YYYYMMDD format"
+        tests:
+          - unique
+          - not_null
