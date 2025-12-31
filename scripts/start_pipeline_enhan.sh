@@ -2,6 +2,7 @@
 
 # =============================================================================
 # E-Commerce Data Pipeline - Enhanced Start Script
+# Compatible with Windows (PowerShell) and Unix-like environments
 # =============================================================================
 
 set -e
@@ -409,10 +410,19 @@ init_databases() {
     
     # Initialize source database
     log_step "Initializing source database..."
-    docker exec -i postgres-source psql -U ecommerce_user -d ecommerce_source < "${PROJECT_ROOT}/sql/init_source.sql" 2>/dev/null || {
-        log_warn "Source DB init via file failed, trying inline..."
-        docker exec postgres-source psql -U ecommerce_user -d ecommerce_source -c "SELECT 1" >/dev/null 2>&1
-    }
+    if command -v powershell.exe >/dev/null 2>&1; then
+        # Windows/PowerShell environment
+        powershell.exe -Command "Get-Content '${PROJECT_ROOT}/sql/init_source.sql' | docker exec -i postgres-source psql -U ecommerce_user -d ecommerce_source" 2>/dev/null || {
+            log_warn "Source DB init via file failed, trying inline..."
+            docker exec postgres-source psql -U ecommerce_user -d ecommerce_source -c "SELECT 1" >/dev/null 2>&1
+        }
+    else
+        # Unix-like environment
+        docker exec -i postgres-source psql -U ecommerce_user -d ecommerce_source < "${PROJECT_ROOT}/sql/init_source.sql" 2>/dev/null || {
+            log_warn "Source DB init via file failed, trying inline..."
+            docker exec postgres-source psql -U ecommerce_user -d ecommerce_source -c "SELECT 1" >/dev/null 2>&1
+        }
+    fi
     
     # Verify source data
     CUSTOMER_COUNT=$(docker exec postgres-source psql -U ecommerce_user -d ecommerce_source -t -c "SELECT COUNT(*) FROM customers" 2>/dev/null | tr -d ' ')
@@ -420,9 +430,17 @@ init_databases() {
     
     # Initialize warehouse database
     log_step "Initializing warehouse database..."
-    docker exec -i postgres-warehouse psql -U warehouse_user -d ecommerce_warehouse < "${PROJECT_ROOT}/sql/init_warehouse.sql" 2>/dev/null || {
-        log_warn "Warehouse DB init via file failed, trying inline..."
-    }
+    if command -v powershell.exe >/dev/null 2>&1; then
+        # Windows/PowerShell environment
+        powershell.exe -Command "Get-Content '${PROJECT_ROOT}/sql/init_warehouse.sql' | docker exec -i postgres-warehouse psql -U warehouse_user -d ecommerce_warehouse" 2>/dev/null || {
+            log_warn "Warehouse DB init via file failed, trying inline..."
+        }
+    else
+        # Unix-like environment
+        docker exec -i postgres-warehouse psql -U warehouse_user -d ecommerce_warehouse < "${PROJECT_ROOT}/sql/init_warehouse.sql" 2>/dev/null || {
+            log_warn "Warehouse DB init via file failed, trying inline..."
+        }
+    fi
     
     # Verify warehouse
     DATE_COUNT=$(docker exec postgres-warehouse psql -U warehouse_user -d ecommerce_warehouse -t -c "SELECT COUNT(*) FROM dim_date" 2>/dev/null | tr -d ' ')
@@ -465,19 +483,23 @@ setup_minio() {
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BLUE}  Step 8: Setting Up MinIO Data Lake${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
+
+    log_step "Configuring MinIO client..."
+    docker exec minio mc alias set local http://localhost:9000 minioadmin minioadmin123 >/dev/null 2>&1 && \
+        log_info "MinIO client configured" || \
+        log_warn "MinIO client configuration may have issues"
+
     log_step "Creating MinIO buckets..."
-    
-    # Use curl to create buckets via MinIO API
+
     buckets=("raw-data" "processed-data" "analytics" "checkpoints")
-    
+
     for bucket in "${buckets[@]}"; do
         # Create bucket using MinIO client inside container
-        docker exec minio mc mb local/$bucket --ignore-existing 2>/dev/null && \
+        docker exec minio mc mb local/$bucket --ignore-existing >/dev/null 2>&1 && \
             log_info "Created bucket: $bucket" || \
             log_warn "Bucket $bucket may already exist"
     done
-    
+
     log_info "✅ MinIO buckets configured"
 }
 

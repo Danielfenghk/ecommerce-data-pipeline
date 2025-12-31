@@ -103,9 +103,9 @@ CREATE TABLE IF NOT EXISTS data_quality_results (
 );
 
 -- Populate Date Dimension (2023-2025)
-INSERT INTO dim_date (date_key, full_date, day_of_week, day_name, day_of_month,
+INSERT INTO dim_date (date_key, full_date, day_of_week, day_name, day_of_month, 
                       week_of_year, month_number, month_name, quarter, year, is_weekend)
-SELECT
+SELECT 
     TO_CHAR(d, 'YYYYMMDD')::INTEGER,
     d,
     EXTRACT(DOW FROM d)::INTEGER,
