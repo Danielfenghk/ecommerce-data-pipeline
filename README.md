@@ -52,7 +52,49 @@ text
 │                                                                                 │
 └─────────────────────────────────────────────────────────────────────────────────┘
 
+1. 整體流程概述
 
+資料來源（Ingestion Layer）：從多種來源擷取資料，包括 REST API（訂單）、CSV 檔案（產品）和 PostgreSQL 資料庫（客戶）。這些來源代表結構化、半結構化與檔案型資料，透過 Apache Kafka 作為訊息佇列（Message Queue）統一匯入，實現即時與批次資料流。
+處理層（Processing Layer）：資料進入 Kafka 後，分為三個並行分支：
+Batch Processing（批次處理，使用 Spark）。
+Streaming Processing（串流處理，使用 Spark）。
+Data Quality Checks（資料品質檢查）。
+這層確保資料在進入儲存前進行轉換、清洗與驗證。
+
+儲存層（Storage Layer）：處理後的資料先存入 Data Lake（使用 MinIO 或 S3 作為物件儲存），再載入 Data Warehouse（PostgreSQL DW）。這體現湖倉一體：湖作為原始/大規模儲存，倉作為精煉/分析儲存。
+消費層（Consumption Layer）：從倉儲輸出到三個工具：
+Grafana（監控）。
+Metabase（BI 分析與視覺化）。
+Apache Airflow（編排與調度整個管道）。
+整體是端到端的資料管道，從來源到分析，形成閉環。這個方案強調可擴展性與開源，符合 2026 年主流湖倉趨勢（如使用 MinIO 模擬 S3，避免雲端鎖定）。
+
+
+2. 湖倉一體的特點在圖中的體現
+
+資料湖（Data Lake）：位於中間，使用 MinIO/S3 作為核心儲存。這是湖的部分，支援原始資料的低成本存放（Schema-on-Read），適合 PB 級多格式資料（如訂單 JSON、產品 CSV）。它作為中間層，允許彈性擴展，避免直接負載到倉儲。
+資料倉儲（Data Warehouse）：使用 PostgreSQL DW 作為下游，專注結構化查詢與 BI。這是倉的部分，提供 Schema-on-Write、ACID 交易與高效 SQL 分析。
+整合機制：湖倉透過處理層連接，Spark 負責從湖中讀取/寫入資料到倉中。雖然圖中未明確提及開放表格格式（如 Iceberg 或 Delta Lake），但在實作中可輕鬆整合（如 Spark + Delta Lake 於 MinIO 上），實現真正湖倉一體的 ACID 支援、時間旅行與治理。這避免傳統 ETL 的複雜，資料可在湖中直接分析，或精煉後移到倉。
+優勢：成本低（全開源）、彈性高（批次/串流並存）、治理好（品質檢查 + 監控）。潛在缺點：若無表格格式，湖易變「資料沼澤」；但可擴充 Hudi/Iceberg 解決。
+免費方案相符：與先前討論的開源堆疊一致（如 MinIO + Spark + Airflow），無需付費雲服務。
+
+3. Spark 的作用分析
+Spark（Apache Spark）在圖中扮演核心處理引擎，出現於 Batch Processing 和 Streaming Processing 分支，是整個管道的「資料轉換與計算大腦」。作為開源分散式處理框架，Spark 支援大規模資料操作，優化記憶體計算，適合大數據場景。具體作用如下：
+
+批次處理（Batch Processing）：Spark 用於定期處理大量歷史資料，如每日聚合訂單/產品資料。作用包括：
+讀取 Kafka 中的批次訊息。
+執行 ETL（Extract-Transform-Load）：清洗、聚合、轉換（如合併訂單與客戶資料）。
+輸出到 Data Lake，提升效率（比傳統 Hadoop 快 100 倍）。
+
+串流處理（Streaming Processing）：Spark Streaming（或 Spark Structured Streaming）處理即時資料流，如實時訂單更新。作用包括：
+從 Kafka 消費即時訊息。
+進行窗口聚合、連線操作（如即時客戶行為分析）。
+確保低延遲輸出到湖中，支援容錯與擴展。
+
+整體貢獻：
+橋接湖倉：Spark 可直接讀寫 MinIO/S3（湖）和 PostgreSQL（倉），整合表格格式（如 Delta Lake）提供事務支援。
+與其他組件的關係：從 Kafka 輸入，與 Data Quality Checks 並行（可能用 Spark SQL 驗證）；Airflow 可調度 Spark 任務；Grafana 可監控 Spark 叢集效能。
+優勢：統一引擎處理批次/串流，避免多框架維護；支援 Python/Scala/Java，易整合 ML（如 Spark MLlib 分析客戶偏好）。
+在湖倉中的定位：Spark 是推薦的處理層工具（如先前免費方案），使湖倉從靜態儲存轉為動態分析平台。
 
 ## ✨ Features
 

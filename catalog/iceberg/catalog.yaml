@@ -1,0 +1,54 @@
+# Iceberg Catalog Configuration
+# ==============================
+# Configuration for Nessie-backed Iceberg catalog
+
+catalog:
+  name: nessie
+  type: nessie
+  
+  # Nessie server configuration
+  nessie:
+    uri: http://nessie:19120/api/v1
+    ref: main
+    authentication:
+      type: NONE
+  
+  # Storage configuration (MinIO/S3)
+  storage:
+    type: s3
+    warehouse: s3://lakehouse/warehouse
+    s3:
+      endpoint: http://minio:9000
+      access-key: minioadmin
+      secret-key: minioadmin123
+      path-style-access: true
+      region: us-east-1
+  
+  # Table defaults
+  table-defaults:
+    format-version: 2
+    write:
+      metadata-compression-codec: gzip
+      parquet-compression-codec: zstd
+
+# Database configurations
+databases:
+  bronze:
+    description: "Raw data layer - source data with metadata"
+    location: s3://lakehouse/warehouse/bronze
+    
+  silver:
+    description: "Cleaned data layer - standardized and validated"
+    location: s3://lakehouse/warehouse/silver
+    
+  gold:
+    description: "Business layer - aggregations and analytics"
+    location: s3://lakehouse/warehouse/gold
+
+# Retention policies
+retention:
+  snapshots:
+    max-age-days: 7
+    min-snapshots-to-keep: 5
+  orphan-files:
+    max-age-days: 3

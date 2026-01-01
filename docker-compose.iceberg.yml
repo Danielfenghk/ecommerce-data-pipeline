@@ -1,0 +1,144 @@
+# =============================================================================
+# E-Commerce Data Lakehouse - Iceberg Services
+# =============================================================================
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.iceberg.yml up -d
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # Nessie - Git-like Catalog for Iceberg
+  # ===========================================================================
+  nessie:
+    image: projectnessie/nessie:0.76.0
+    container_name: nessie
+    ports:
+      - "19120:19120"
+    environment:
+      - NESSIE_VERSION_STORE_TYPE=IN_MEMORY
+      - QUARKUS_HTTP_PORT=19120
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v1/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - pipeline-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Spark with Iceberg Support
+  # ===========================================================================
+  spark-iceberg:
+    image: tabulario/spark-iceberg:3.5.1_1.5.0
+    container_name: spark-iceberg
+    ports:
+      - "8888:8888"    # Jupyter Notebook
+      - "8180:8080"    # Spark Master UI
+      - "4040:4040"    # Spark Application UI
+      - "10000:10000"  # Spark Thrift Server
+      - "10001:10001"  # Spark Thrift HTTP
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+      - AWS_REGION=us-east-1
+      - SPARK_HOME=/opt/spark
+      - PYSPARK_PYTHON=python3
+      - PYSPARK_DRIVER_PYTHON=python3
+    volumes:
+      - ./spark_jobs:/home/iceberg/spark-jobs
+      - ./src/lakehouse:/home/iceberg/lakehouse
+      - ./data:/home/iceberg/data
+      - ./lakehouse/notebooks:/home/iceberg/notebooks
+      - spark_iceberg_data:/home/iceberg/warehouse
+    depends_on:
+      nessie:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Starting Jupyter Notebook..."
+        pip install psycopg2-binary pandas pyarrow --quiet
+        jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root \
+          --NotebookApp.token='' --NotebookApp.password='' &
+        echo "Jupyter started on port 8888"
+        tail -f /dev/null
+    networks:
+      - pipeline-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # Trino - Distributed SQL Query Engine
+  # ===========================================================================
+  trino:
+    image: trinodb/trino:439
+    container_name: trino
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./trino/etc:/etc/trino:ro
+      - ./trino/catalog:/etc/trino/catalog:ro
+      - trino_data:/data/trino
+    environment:
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin123
+      - AWS_REGION=us-east-1
+    depends_on:
+      nessie:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - pipeline-network
+    restart: unless-stopped
+
+  # ===========================================================================
+  # MinIO Initialization
+  # ===========================================================================
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Waiting for MinIO..."
+        sleep 5
+        
+        echo "Configuring MinIO client..."
+        mc alias set myminio http://minio:9000 minioadmin minioadmin123
+        
+        echo "Creating buckets..."
+        mc mb myminio/lakehouse --ignore-existing
+        mc mb myminio/warehouse --ignore-existing
+        mc mb myminio/checkpoints --ignore-existing
+        
+        echo "Setting bucket policies..."
+        mc anonymous set public myminio/lakehouse
+        mc anonymous set public myminio/warehouse
+        
+        echo "Listing buckets..."
+        mc ls myminio
+        
+        echo "MinIO initialization complete!"
+    networks:
+      - pipeline-network
+
+volumes:
+  spark_iceberg_data:
+  trino_data:
+
+networks:
+  pipeline-network:
+    external: true
